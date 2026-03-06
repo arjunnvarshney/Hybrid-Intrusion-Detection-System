@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hybrid IDS Pro Monitor</title>
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Leaflet Map -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- Socket.io -->
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;700&family=Outfit:wght@300;400;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-dark: #080a0c;
+            --card-bg: rgba(22, 27, 34, 0.8);
+            --border-color: rgba(48, 54, 61, 0.5);
+            --accent-blue: #58a6ff;
+            --accent-red: #ff7b72;
+            --accent-orange: #ffa657;
+            --accent-purple: #bc8cff;
+            --accent-green: #3fb950;
+            --text-main: #c9d1d9;
+            --glass-bg: rgba(13, 17, 23, 0.7);
+        }
+
+        body {
+            background: radial-gradient(circle at 50% 10%, #161b22 0%, #080a0c 100%);
+            color: var(--text-main);
+            font-family: 'Outfit', sans-serif;
+            overflow-x: hidden;
+            min-height: 100vh;
+        }
+
+        .navbar {
+            background: var(--glass-bg) !important;
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border-color);
+            padding: 1.2rem 0;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+        }
+
+        .card {
+            background: var(--card-bg);
+            backdrop-filter: blur(8px);
+            border: 1px solid var(--border-color);
+            color: var(--text-main);
+            border-radius: 16px;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+            border-color: var(--accent-blue);
+            box-shadow: 0 8px 32px rgba(88, 166, 255, 0.15);
+        }
+
+        .card {
+            animation: cardAppear 0.5s ease-out forwards;
+            opacity: 0;
+        }
+
+        @keyframes cardAppear {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        #card-1 { animation-delay: 0.1s; }
+        #card-2 { animation-delay: 0.2s; }
+        #card-3 { animation-delay: 0.3s; }
+        #card-4 { animation-delay: 0.4s; }
+
+        .stat-value {
+            font-size: 2.5rem;
+            font-weight: 800;
+            color: var(--accent-blue);
+            text-shadow: 0 0 20px rgba(88, 166, 255, 0.3);
+            letter-spacing: -1px;
+        }
+
+        .table {
+            color: var(--text-main);
+            font-size: 0.9rem;
+            background: transparent !important;
+        }
+
+        .table thead th {
+            border-bottom: 2px solid var(--border-color);
+            text-transform: uppercase;
+            font-size: 0.75rem;
+            letter-spacing: 1.5px;
+            color: #f0f6fc; /* Brightened for visibility */
+            font-weight: 700;
+        }
+
+        .table-hover tbody tr { 
+            cursor: pointer; 
+            transition: background 0.2s;
+            border-bottom: 1px solid rgba(48, 54, 61, 0.3);
+        }
+
+        .table-hover tbody tr:hover {
+            background-color: rgba(88, 166, 255, 0.1) !important;
+            color: #ffffff;
+        }
+
+        .modal-content {
+            background: var(--card-bg);
+            backdrop-filter: blur(16px);
+            border: 1px solid var(--border-color);
+            color: var(--text-main);
+            border-radius: 20px;
+        }
+
+        .forensics-label {
+            color: var(--accent-blue);
+            font-weight: 700;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            opacity: 0.8;
+        }
+
+        .forensics-value {
+            font-family: 'Roboto Mono', monospace;
+            background: rgba(0, 0, 0, 0.3);
+            padding: 8px 12px;
+            border-radius: 8px;
+            display: block;
+            margin-bottom: 12px;
+            border: 1px solid var(--border-color);
+            word-break: break-all;
+        }
+
+        .mono { font-family: 'Roboto Mono', monospace; }
+        
+        .badge-CRITICAL { background: linear-gradient(45deg, #ff0000, #ff443a); box-shadow: 0 4px 12px rgba(255, 0, 0, 0.6); animation: pulse 2s infinite; }
+        .badge-HIGH { background: linear-gradient(45deg, #ff443a, #ff7b72); box-shadow: 0 2px 8px rgba(255, 68, 58, 0.4); }
+        .badge-MEDIUM { background: linear-gradient(45deg, #d29922, #ffa657); box-shadow: 0 2px 8px rgba(210, 153, 34, 0.4); }
+        .badge-LOW { background: linear-gradient(45deg, #1f6feb, #58a6ff); box-shadow: 0 2px 8px rgba(31, 111, 235, 0.4); }
+
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+
+        .progress {
+            background-color: rgba(255, 255, 255, 0.05) !important;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        .progress-bar {
+            transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        #map {
+            height: 450px;
+            width: 100%;
+            border-radius: 16px;
+            border: 1px solid var(--border-color);
+            background: var(--card-bg);
+        }
+
+        .ip-list-item {
+            padding: 10px 0;
+            border-bottom: 1px solid rgba(48, 54, 61, 0.3);
+            animation: fadeIn 0.5s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .text-muted {
+            color: #adb5bd !important; /* Brighter muted text */
+        }
+        .stat-label { font-size: 0.75rem; color: #8b949e; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px; }
+
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: var(--bg-dark); }
+        ::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--accent-blue); }
+    </style>
+</head>
+
+<body>
+
+    <nav class="navbar navbar-dark bg-dark mb-4 shadow-sm">
+        <div class="container d-flex justify-content-between align-items-center">
+            <span class="navbar-brand mb-0 h1">
+                <span class="me-2">🛡️</span> Hybrid IDS <span class="text-info">Pro</span>
+            </span>
+            <div class="d-flex align-items-center">
+                <span class="badge bg-success me-3" id="system-status">LIVE MONITORING</span>
+                <span id="last-update" class="text-muted small me-3">Updated: Never</span>
+                <a href="/logout" class="btn btn-sm btn-outline-danger">Logout</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container pb-5">
+        <!-- Top Stats -->
+        <div class="row mb-4 text-center">
+            <div class="col-md-3">
+                <div class="card p-3 shadow-sm">
+                    <div class="stat-label">Total Packets</div>
+                    <div class="stat-value" id="total-packets">0</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card p-3 shadow-sm">
+                    <div class="stat-label">Blocked Attacks</div>
+                    <div class="stat-value text-danger" id="blocked-count">0</div>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="card p-3 shadow-sm">
+                    <div class="stat-label">Signatures</div>
+                    <div class="stat-value text-warning" id="sig-hits">0</div>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="card p-3 shadow-sm">
+                    <div class="stat-label">ML Anomalies</div>
+                    <div class="stat-value text-info" id="ml-hits">0</div>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="card p-3 shadow-sm border-danger">
+                    <div class="stat-label text-danger">Active Blocks</div>
+                    <div class="stat-value text-danger" id="block-count">0</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Charts Row 1 -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="card h-100 p-3">
+                    <h6 class="mb-3">Attack Distribution</h6>
+                    <canvas id="attackTypeChart"></canvas>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card h-100 p-3">
+                    <h6 class="mb-3">Signature vs ML</h6>
+                    <canvas id="sourceChart"></canvas>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card h-100 p-3">
+                    <h6 class="mb-3 text-danger">🛡️ Recent Active Blocks</h6>
+                    <div id="blocked-ip-list" class="mt-2" style="max-height: 200px; overflow-y: auto;">
+                        <!-- Populated by JS -->
+                        <div class="text-center text-muted mt-4">No active blocks</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card h-100 p-3">
+                    <h6 class="mb-3 text-info">⚙️ Threat Correlations</h6>
+                    <div id="correlation-list" style="max-height: 200px; overflow-y: auto;">
+                        <div class="text-center text-muted mt-4">No correlations detected</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Global Attack Map -->
+        <div class="row mb-4">
+            <div class="col-md-12">
+                <div class="card p-3 shadow-md">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h6 class="mb-0">🌍 Global Threat Intelligence Map</h6>
+                        <span class="text-muted small">Live attack origins (Simulated/GeoIP)</span>
+                    </div>
+                    <div id="map"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Chart Row 2 -->
+        <div class="row mb-4">
+            <div class="col-md-12">
+                <div class="card p-3">
+                    <h6 class="mb-3">Threat Velocity (Alerts per Minute)</h6>
+                    <canvas id="velocityChart" style="max-height: 200px;"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- System Health Row -->
+        <div class="row mb-4">
+            <div class="col-md-12">
+                <div class="card p-3 shadow-sm border-info">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h6 class="mb-0 text-info">⚙️ System Health & Performance</h6>
+                        <span class="badge bg-dark border border-info" id="pps-badge">0 PPS</span>
+                    </div>
+                    <div class="row text-center mt-3">
+                        <div class="col-md-2">
+                            <div class="small text-muted text-uppercase mb-1">CPU Usage</div>
+                            <div class="h5 mb-0 mono" id="health-cpu">0%</div>
+                            <div class="progress mt-2" style="height: 4px; background: #21262d;">
+                                <div id="cpu-bar" class="progress-bar bg-info" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        <div class="col-md-2">
+                            <div class="small text-muted text-uppercase mb-1">RAM Usage</div>
+                            <div class="h5 mb-0 mono" id="health-ram">0%</div>
+                            <div class="progress mt-2" style="height: 4px; background: #21262d;">
+                                <div id="ram-bar" class="progress-bar bg-success" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="small text-muted text-uppercase mb-1">Database Size</div>
+                            <div class="h5 mb-0 mono" id="health-db">0 MB</div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="small text-muted text-uppercase mb-1">Throughput</div>
+                            <div class="h5 mb-0 mono" id="health-pps">0 packets/sec</div>
+                        </div>
+                        <div class="col-md-2">
+                            <div class="small text-muted text-uppercase mb-1">Active Users</div>
+                            <div class="h5 mb-0 mono" id="health-users">0</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Alerts Table -->
+        <div class="card shadow-sm">
+            <div class="card-header border-bottom border-secondary d-flex justify-content-between align-items-center p-3">
+                <h5 class="mb-0">Real-time Security Streams</h5>
+                <div class="small text-muted">Click any row for deep packet forensics</div>
+                <div>
+                    <a href="/export_report?format=csv" class="btn btn-sm btn-outline-info me-2">Export CSV</a>
+                    <a href="/export_report?format=pdf" class="btn btn-sm btn-outline-warning me-2">Export PDF</a>
+                    <button class="btn btn-sm btn-outline-secondary me-2" onclick="location.reload()">Refresh All</button>
+                    <button class="btn btn-sm btn-outline-danger" onclick="clearTable()">Clear Logs</button>
+                </div>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-dark table-hover mb-0">
+                        <thead class="table-dark">
+                            <tr>
+                                <th class="ps-3">Timestamp</th>
+                                <th>Type</th>
+                                <th>Severity</th>
+                                <th>Source IP</th>
+                                <th>Dest Port</th>
+                                <th>Source Type</th>
+                                <th>ML Conf</th>
+                                <th>Risk</th>
+                                <th>Alert Detail/Pattern</th>
+                            </tr>
+                        </thead>
+                        <tbody id="alert-body" class="mono">
+                            <!-- Alerts dynamically populated -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Forensics Modal -->
+    <div class="modal fade" id="forensicsModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content shadow-lg">
+                <div class="modal-header border-secondary">
+                    <h5 class="modal-title"><span class="me-2">🔍</span> Deep Packet Forensics</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <span class="forensics-label">Source IP</span>
+                            <span class="forensics-value text-info" id="f-src"></span>
+                            
+                            <span class="forensics-label">Destination IP</span>
+                            <span class="forensics-value" id="f-dst"></span>
+                            
+                            <span class="forensics-label">Protocol / Service</span>
+                            <span class="forensics-value" id="f-proto"></span>
+                        </div>
+                        <div class="col-md-6">
+                            <span class="forensics-label">Destination Port</span>
+                            <span class="forensics-value text-warning" id="f-port"></span>
+                            
+                            <span class="forensics-label">Packet Length</span>
+                            <span class="forensics-value" id="f-size"></span>
+                            
+                            <span class="forensics-label">TCP Flags</span>
+                            <span class="forensics-value" id="f-flags"></span>
+                        </div>
+                    </div>
+                    <div class="row mt-2">
+                        <div class="col-12">
+                            <span class="forensics-label">Detection Context</span>
+                            <div class="forensics-value">
+                                Method: <b id="f-method"></b> | 
+                                Confidence: <b class="text-success" id="f-conf"></b> |
+                                Type: <b class="text-danger" id="f-type"></b>
+                            </div>
+                            
+                            <span class="forensics-label">Payload Snippet (Hex/ASCII)</span>
+                            <pre class="forensics-value" style="white-space: pre-wrap; min-height: 80px; color: #acb1b7;" id="f-payload"></pre>
+                        </div>
+                    </div>
+                <div class="modal-footer border-secondary">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close Evidence</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Chart and Map Objects
+        let attackChart, sourceChart, velocityChart, map;
+        let markers = {};
+        let totalProcessed = 0;
+
+        function initMap() {
+            map = L.map('map', {
+                center: [20, 0],
+                zoom: 2,
+                zoomControl: false,
+                attributionControl: false
+            });
+
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                maxZoom: 19
+            }).addTo(map);
+        }
+
+        function initCharts() {
+            const ctx1 = document.getElementById('attackTypeChart').getContext('2d');
+            attackChart = new Chart(ctx1, {
+                type: 'doughnut',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        data: [],
+                        backgroundColor: ['#f85149', '#d29922', '#1f6feb', '#8b949e', '#58a6ff'],
+                        borderWidth: 0
+                    }]
+                },
+                options: { plugins: { legend: { position: 'bottom', labels: { color: '#c9d1d9' } } } }
+            });
+
+            const ctx2 = document.getElementById('sourceChart').getContext('2d');
+            sourceChart = new Chart(ctx2, {
+                type: 'bar',
+                data: {
+                    labels: ['Signature', 'ML Anomaly'],
+                    datasets: [{
+                        label: 'Hits',
+                        data: [0, 0],
+                        backgroundColor: ['#d29922', '#58a6ff'],
+                        borderRadius: 6
+                    }]
+                },
+                options: { 
+                    scales: { 
+                        y: { beginAtZero: true, grid: { color: '#30363d' }, ticks: { color: '#c9d1d9' } },
+                        x: { ticks: { color: '#c9d1d9' } }
+                    },
+                    plugins: { legend: { display: false } }
+                }
+            });
+
+            const ctx3 = document.getElementById('velocityChart').getContext('2d');
+            velocityChart = new Chart(ctx3, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Alerts',
+                        data: [],
+                        borderColor: '#58a6ff',
+                        backgroundColor: 'rgba(88, 166, 255, 0.1)',
+                        fill: true,
+                        tension: 0.4
+                    }]
+                },
+                options: { 
+                    scales: { 
+                        y: { beginAtZero: true, grid: { color: '#30363d' }, ticks: { color: '#c9d1d9' } },
+                        x: { grid: { display: false }, ticks: { color: '#c9d1d9' } }
+                    },
+                    plugins: { legend: { display: false } }
+                }
+            });
+        }
+
+        async function updateStats() {
+            try {
+                const response = await fetch('/api/stats');
+                const stats = await response.json();
+                if (stats.error) return;
+
+                // Update Charts
+                const typeLabels = Object.keys(stats.attack_types);
+                const typeValues = Object.values(stats.attack_types);
+                attackChart.data.labels = typeLabels;
+                attackChart.data.datasets[0].data = typeValues;
+                attackChart.update();
+
+                sourceChart.data.datasets[0].data = [stats.sources.sig || 0, stats.sources.ml || 0];
+                sourceChart.update();
+
+                velocityChart.data.labels = stats.time_series.map(d => d.minute);
+                velocityChart.data.datasets[0].data = stats.time_series.map(d => d.count);
+                velocityChart.update();
+
+                // Counters
+                const totalAlerts = typeValues.reduce((a, b) => a + b, 0);
+                document.getElementById('blocked-count').innerText = totalAlerts;
+                document.getElementById('sig-hits').innerText = stats.sources.sig || 0;
+                document.getElementById('ml-hits').innerText = stats.sources.ml || 0;
+                document.getElementById('block-count').innerText = stats.blocked_ips.length || 0;
+
+                // Update Blocked IPs List
+                const blockedList = document.getElementById('blocked-ip-list');
+                blockedList.innerHTML = stats.blocked_ips.map(item => `
+                    <div class="ip-list-item d-flex justify-content-between align-items-center">
+                        <div>
+                            <span class="mono text-danger fw-bold">${item.ip}</span><br>
+                            <small class="text-muted" style="font-size: 0.7rem;">${item.reason}</small>
+                        </div>
+                        <button class="btn btn-sm btn-outline-success py-0" onclick="unblockIp('${item.ip}')">Unblock</button>
+                    </div>
+                `).join('') || '<div class="text-center text-muted mt-4">No active blocks</div>';
+                
+                // Update Correlation List
+                const correlationList = document.getElementById('correlation-list');
+                correlationList.innerHTML = stats.correlations.map(item => `
+                    <div class="ip-list-item">
+                        <div>
+                            <span class="badge bg-danger small mb-1">${item.rule_name}</span><br>
+                            <span class="mono text-info small">${item.src_ip}</span><br>
+                            <small class="text-muted" style="font-size: 0.65rem;">${item.event_chain}</small>
+                        </div>
+                    </div>
+                `).join('') || '<div class="text-center text-muted mt-4">No correlations</div>';
+
+                // Simulation for total packets processed (approx)
+                if (totalProcessed < totalAlerts * 12) totalProcessed = totalAlerts * 12 + 10;
+                document.getElementById('total-packets').innerText = totalProcessed;
+
+                document.getElementById('last-update').innerText = `Updated: ${new Date().toLocaleTimeString()}`;
+            } catch (e) { console.error("Stats Error:", e); }
+        }
+
+        async function updateHealth() {
+            try {
+                const response = await fetch('/api/health');
+                const health = await response.json();
+                
+                document.getElementById('health-cpu').innerText = `${health.cpu_usage}%`;
+                document.getElementById('cpu-bar').style.width = `${health.cpu_usage}%`;
+                
+                document.getElementById('health-ram').innerText = `${health.memory_usage}%`;
+                document.getElementById('ram-bar').style.width = `${health.memory_usage}%`;
+                
+                document.getElementById('health-db').innerText = `${health.db_size_mb} MB`;
+                document.getElementById('health-pps').innerText = `${health.pps} pkt/s`;
+                document.getElementById('pps-badge').innerText = `${health.pps} PPS`;
+                document.getElementById('health-users').innerText = health.active_sessions;
+
+                // Dynamic color for bars
+                const cpuBar = document.getElementById('cpu-bar');
+                if (health.cpu_usage > 80) cpuBar.className = 'progress-bar bg-danger';
+                else if (health.cpu_usage > 50) cpuBar.className = 'progress-bar bg-warning';
+                else cpuBar.className = 'progress-bar bg-info';
+
+            } catch (e) { console.error("Health Error:", e); }
+        }
+
+        async function updateAlertTable() {
+            try {
+                const response = await fetch('/api/alerts');
+                const alerts = await response.json();
+                const tableBody = document.getElementById('alert-body');
+                tableBody.innerHTML = '';
+                alerts.forEach(alert => addAlertToTable(alert, false));
+            } catch (e) { console.error("Table Error:", e); }
+        }
+
+        function addAlertToTable(alert, isNew = true) {
+            const tableBody = document.getElementById('alert-body');
+            const row = document.createElement('tr');
+            row.onclick = () => showForensics(alert.id);
+            
+            const severityClass = `badge-${alert.severity || 'LOW'}`;
+            const typeLabel = alert.type.replace('_', ' ');
+
+            // Add to map
+            if (alert.lat && alert.lon) {
+                const markerKey = `${alert.lat},${alert.lon}`;
+                if (!markers[markerKey]) {
+                    const marker = L.circleMarker([alert.lat, alert.lon], {
+                        radius: 8,
+                        fillOpacity: 0.6,
+                        color: (alert.severity === 'HIGH' || alert.severity === 'CRITICAL') ? '#f85149' : '#d29922',
+                        stroke: false
+                    }).addTo(map);
+                    
+                    marker.bindPopup(`<div class="mono small"><b class="text-info">${alert.src_ip}</b><br>Type: ${typeLabel}</div>`);
+                    markers[markerKey] = marker;
+                }
+            }
+
+            // Source coloring
+            // Source coloring
+            let sourceColor = '#6c757d';
+            const src = alert.detection_source;
+            if (src === 'SIGNATURE' || src === 'SIG') sourceColor = '#ffa657';
+            if (src === 'ML' || src === 'RF' || src === 'IF') sourceColor = '#58a6ff';
+            if (src.includes('HYBRID')) sourceColor = '#ff7b72';
+            if (src === 'THREAT_INTEL') sourceColor = '#bc8cff';
+
+            const mlConf = alert.ml_probability ? (alert.ml_probability * 100).toFixed(1) + '%' : 'N/A';
+
+            const risk = alert.risk_score || 0;
+            let riskColor = '#3fb950';
+            if (risk >= 81) riskColor = '#ff443a';
+            else if (risk >= 61) riskColor = '#ffa657';
+            else if (risk >= 31) riskColor = '#d29922';
+
+            row.innerHTML = `
+                <td class="text-muted ps-3">${alert.timestamp.split(' ')[1]}</td>
+                <td><span class="badge bg-dark border border-secondary">${typeLabel}</span></td>
+                <td><span class="badge ${severityClass}">${alert.severity || 'LOW'}</span></td>
+                <td class="text-info">${alert.src_ip}</td>
+                <td class="text-warning">${alert.dst_port || '-'}</td>
+                <td><span class="badge" style="background-color: ${sourceColor}">${alert.detection_source}</span></td>
+                <td class="text-success">${mlConf}</td>
+                <td class="fw-bold" style="color: ${riskColor}">${risk}</td>
+                <td class="small">${alert.message}</td>
+            `;
+
+            if (isNew) {
+                tableBody.prepend(row);
+                if (tableBody.rows.length > 100) tableBody.deleteRow(100);
+            } else {
+                tableBody.appendChild(row);
+            }
+        }
+
+        async function showForensics(id) {
+            try {
+                const response = await fetch(`/api/alert/${id}`);
+                const data = await response.json();
+                if (data.error) return;
+
+                document.getElementById('f-src').innerText = data.src_ip;
+                document.getElementById('f-dst').innerText = data.dst_ip;
+                document.getElementById('f-proto').innerText = `${data.protocol} (${data.service})`;
+                document.getElementById('f-port').innerText = data.port || 'N/A';
+                document.getElementById('f-size').innerText = data.packet_size + ' bytes';
+                document.getElementById('f-flags').innerText = data.flags || 'None';
+                document.getElementById('f-method').innerText = data.detection_source;
+                document.getElementById('f-conf').innerText = data.ml_probability ? (data.ml_probability * 100).toFixed(2) + '%' : 'N/A';
+                document.getElementById('f-type').innerText = data.attack_type;
+                document.getElementById('f-payload').innerText = data.payload || 'No payload data captured';
+
+                const modal = new bootstrap.Modal(document.getElementById('forensicsModal'));
+                modal.show();
+            } catch (e) { console.error("Forensics Load Error:", e); }
+        }
+
+        async function unblockIp(ip) {
+            if (!confirm(`Are you sure you want to unblock ${ip}?`)) return;
+            try {
+                const response = await fetch(`/api/unblock/${ip}`, { method: 'POST' });
+                const res = await response.json();
+                if (res.status === 'success') {
+                    updateStats();
+                } else {
+                    alert("Error unblocking IP: " + res.message);
+                }
+            } catch (e) { console.error("Unblock Error:", e); }
+        }
+
+        function clearTable() {
+            document.getElementById('alert-body').innerHTML = '';
+        }
+
+        // WebSocket Setup
+        const socket = io();
+        socket.on('connect', () => {
+            console.log("[*] WebSocket Connected");
+            document.getElementById('system-status').innerText = 'LIVE MONITORING (WS)';
+            document.getElementById('system-status').className = 'badge bg-success';
+        });
+
+        socket.on('new_alert', (alert) => {
+            addAlertToTable(alert, true);
+            updateStats();
+        });
+
+        // Initialize
+        initMap();
+        initCharts();
+        updateStats();
+        updateAlertTable();
+        updateHealth();
+        setInterval(updateStats, 10000);
+        setInterval(updateHealth, 2000);
+    </script>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
+</body>
+
+</html>

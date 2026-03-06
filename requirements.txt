@@ -1,0 +1,16 @@
+flask
+pandas
+numpy
+scikit-learn
+joblib
+scapy
+matplotlib
+seaborn
+python-dotenv
+geoip2
+flask-socketio
+eventlet
+requests
+fpdf2
+psutil
+flask-login
