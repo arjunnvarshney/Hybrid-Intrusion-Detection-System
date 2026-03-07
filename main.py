@@ -4,6 +4,7 @@ import random
 import time
 import threading
 import sys
+import os
 from collections import defaultdict, deque
 
 from src.packet_capture.sniffer import simulate_packets, PacketSniffer
@@ -36,75 +37,33 @@ def main():
     intel_manager = ThreatIntelManager()
     corrector = CorrelationEngine()
     
-    # Update Threat Intel Feed on startup
-    try:
-        intel_thread = threading.Thread(target=intel_manager.update_feed)
-        intel_thread.daemon = True
-        intel_thread.start()
-    except Exception as e:
-        print(f"[!] Threat Intel Startup Error: {e}")
-
-    # Correlation Analysis Task
-    def run_correlation():
-        while True:
-            time.sleep(30)
-            corrector.analyze()
-
-    correlation_thread = threading.Thread(target=run_correlation)
-    correlation_thread.daemon = True
-    correlation_thread.start()
-
     # Attack tracker: {ip: deque([timestamps])}
     attack_tracker = defaultdict(lambda: deque(maxlen=20))
     BLOCK_THRESHOLD = 10
     BLOCK_WINDOW = 60 # Seconds
 
-    # 2. Start Dashboard in background
-    print("[*] Starting Web Dashboard on http://127.0.0.1:5000")
-    start_dashboard_thread()
-
     def calculate_risk_score(attack_type, attempts, ml_prob, intel_hit):
         """Calculates a unified security risk score (0-100)."""
         score = 10
-        
-        # Multipliers based on attack severity
         type_weights = {
-            "NORMAL": 0,
-            "PORT_SCAN": 1.5,
-            "BRUTE_FORCE": 2.0,
-            "DDOS": 2.5,
-            "MALWARE": 3.0,
-            "MULTI_VECTOR_ATTACK": 4.0,
+            "NORMAL": 0, "PORT_SCAN": 1.5, "BRUTE_FORCE": 2.0,
+            "DDOS": 2.5, "MALWARE": 3.0, "MULTI_VECTOR_ATTACK": 4.0,
             "BLACKLISTED_IP": 3.5
         }
-        
         if attack_type in type_weights:
             score += 15 * type_weights[attack_type]
-            
-        # Attempts factor (Cap at 30)
         score += min(attempts * 5, 30)
-        
-        # ML Confidence factor (Cap at 20)
         score += (ml_prob * 20)
-        
-        # Intelligence Hit factor
         if intel_hit:
             score += 30
-            
         return int(min(100, score))
-    
+
     def orchestrate_detection(packet_data):
-        """
-        Orchestration Flow:
-        1. Capture -> 2. Block Check -> 3. Threat Intel -> 4. ML/Sig Detection -> 5. Auto-Block -> 6. Alert/Log
-        """
-        # --- PPS Counter ---
+        """Main detection logic."""
         import src.dashboard.app as dashboard_app
         dashboard_app.packet_counter += 1
         
         src_ip = packet_data.get('src_ip', '0.0.0.0')
-        
-        # --- Firewall Check ---
         if firewall.is_blocked(src_ip):
             return
 
@@ -116,157 +75,110 @@ def main():
         payload = packet_data.get('payload', '')
         timestamp = packet_data.get('timestamp', datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
 
-        # --- Threat Intel Check ---
         intel_hit = intel_manager.is_malicious(src_ip)
-        
-        # --- Detection State ---
         sig_alert = sig_detector.check(packet_data)
-        ml_hits = [] # List of (model_name, probability/confidence)
+        ml_hits = [] 
 
-        # --- ML Anomaly Detection ---
         features = None
         if anomaly_detector.ready or iso_detector.ready:
             features = feature_extractor.extract(packet_data)
-            
         if features is not None:
-            # 1. Random Forest (Supervised)
             if anomaly_detector.ready:
-                rf_res = anomaly_detector.predict(features)
-                if rf_res and rf_res[1] > 0.65: # Threshold for RF
-                    ml_hits.append(("RF", rf_res[1]))
-            
-            # 2. Isolation Forest (Unsupervised)
+                res = anomaly_detector.predict(features)
+                if res['prediction'] != 'NORMAL':
+                    ml_hits.append(('RF', res['probability']))
             if iso_detector.ready:
-                if_res = iso_detector.predict(features)
-                if if_res and if_res[0] == 1: # Anomaly detected (1 for anomaly, -1 for normal)
-                    ml_hits.append(("IF", if_res[1])) # if_res[1] is anomaly score/confidence
+                res = iso_detector.predict(features)
+                if res['prediction'] != 'NORMAL':
+                    ml_hits.append(('IF', res['score']))
 
-        ml_triggered = len(ml_hits) > 0
-
-        # --- Hybrid Decision Logic ---
-        triggers = []
-        if sig_alert: triggers.append("SIG")
-        for name, conf in ml_hits: triggers.append(name)
-        
-        detection_source = "NORMAL"
-        final_severity = "INFO"
-        final_message = "Normal traffic"
-        final_type = "NORMAL"
-        ml_prob = max([h[1] for h in ml_hits]) if ml_hits else 0.0
-
-        if intel_hit:
-            detection_source = "THREAT_INTEL"
-            final_severity = "HIGH"
-            final_type = "BLACKLISTED_IP"
-            final_message = f"DANGER: Blacklisted IP identified via Intelligence Feed!"
-        elif len(triggers) >= 2:
-            # Multi-vector confirmation
-            detection_source = f"HYBRID ({'+'.join(triggers)})"
-            final_severity = "CRITICAL"
-            final_type = "MULTI_VECTOR_ATTACK"
-            msg_parts = []
-            if sig_alert: msg_parts.append(sig_alert['message'])
-            if ml_hits: msg_parts.append(f"Anomalous behavior verified by {len(ml_hits)} ML models")
-            final_message = " | ".join(msg_parts)
-        elif triggers:
-            # Single trigger
-            detection_source = triggers[0]
-            if detection_source == "SIG":
-                final_severity = sig_alert['severity']
+        if sig_alert or ml_hits or intel_hit:
+            final_type = "UNKNOWN"
+            final_severity = "LOW"
+            ml_triggered = len(ml_hits) > 0
+            ml_prob = max([h[1] for h in ml_hits]) if ml_hits else 0.0
+            
+            if sig_alert:
                 final_type = sig_alert['type']
-                final_message = sig_alert['message']
-            elif detection_source == "RF":
-                final_severity = "MEDIUM"
-                final_type = "ML_ANOMALY"
-                final_message = f"Suspicious activity via Random Forest (Conf: {ml_prob:.2f})"
-            elif detection_source == "IF":
-                final_severity = "MEDIUM"
-                final_type = "OUTLIER_DETECTION"
-                final_message = f"Unusual pattern detected via Isolation Forest (Outlier)"
-
-        # --- Dynamic Risk Scoring ---
-        attempts = len([t for t in attack_tracker[src_ip] if time.time() - t < BLOCK_WINDOW])
-        risk_score = calculate_risk_score(final_type, attempts, ml_prob, intel_hit)
-        
-        # Override severity based on risk thresholds
-        if risk_score >= 81: final_severity = "CRITICAL"
-        elif risk_score >= 61: final_severity = "HIGH"
-        elif risk_score >= 31: final_severity = "MEDIUM"
-        else: final_severity = "LOW"
-        
-        if final_type == "NORMAL": final_severity = "INFO"
-
-        # --- Auto-Blocking Logic ---
-        if detection_source != "NORMAL":
-            now = time.time()
-            attack_tracker[src_ip].append(now)
+                final_severity = sig_alert['severity']
+            elif ml_triggered:
+                final_type = "ANOMALY"
+                final_severity = "MEDIUM" if len(ml_hits) == 1 else "HIGH"
             
-            # Count attacks in the last window
-            recent_attacks = [t for t in attack_tracker[src_ip] if now - t < BLOCK_WINDOW]
-            
-            if len(recent_attacks) >= BLOCK_THRESHOLD:
-                if firewall.block_ip(src_ip, f"Exceeded {BLOCK_THRESHOLD} attacks in {BLOCK_WINDOW}s"):
-                    # Log a dedicated Block event
-                    block_msg = f"AUTO-BLOCK: IP {src_ip} restricted for repeated malicious behavior"
-                    db_logger.log_event(
-                        timestamp=timestamp, src_ip=src_ip, dst_ip="IDS_INTERNAL",
-                        protocol="CONTROL", service="FIREWALL", port=0, size=0,
-                        source="FIREWALL", severity="CRITICAL", attack_type="AUTO_BLOCKED",
-                        message=block_msg
-                    )
-                    # Notify Dashboard
-                    alert_queue.put({
-                        "type": "AUTO_BLOCKED", "severity": "CRITICAL", "source_ip": src_ip,
-                        "dst_ip": "FIREWALL", "dst_port": 0, "packet_size": 0,
-                        "timestamp": timestamp, "message": block_msg,
-                        "detection_source": "FIREWALL", "ml_probability": 1.0
-                    })
+            if intel_hit:
+                final_type = "BLACKLISTED_IP"
+                final_severity = "HIGH"
+                detection_source = "THREAT_INTEL"
+            else:
+                detection_source = []
+                if sig_alert: detection_source.append("SIGNATURE")
+                if ml_triggered: detection_source.append("ML")
+                detection_source = "+".join(detection_source)
 
-            # --- Send Normal Alert ---
-            alert_payload = {
-                "type": final_type,
-                "severity": final_severity,
-                "source_ip": src_ip,
-                "dst_ip": dst_ip,
-                "dst_port": port,
-                "packet_size": size,
-                "timestamp": timestamp,
-                "message": final_message,
-                "detection_source": detection_source,
-                "ml_probability": ml_prob,
-                "risk_score": risk_score
-            }
-            alert_queue.put(alert_payload)
-            print(f"[!] {detection_source} ALERT: {final_type} | {src_ip} -> {final_message}")
+            attack_tracker[src_ip].append(time.time())
+            attempts = len([t for t in attack_tracker[src_ip] if time.time() - t < BLOCK_WINDOW])
+            risk_score = calculate_risk_score(final_type, attempts, ml_prob, intel_hit)
 
-        # Persistent Log (Always logged)
-        db_logger.log_event(
-            timestamp=timestamp,
-            src_ip=src_ip,
-            dst_ip=dst_ip,
-            protocol=proto,
-            service=packet_data.get('port', 'other'),
-            port=port,
-            size=size,
-            flags=flags,
-            payload=payload,
-            sig_triggered=bool(sig_alert),
-            ml_triggered=ml_triggered,
-            ml_prob=ml_prob,
-            source=detection_source,
-            severity=final_severity,
-            attack_type=final_type,
-            risk_score=risk_score,
-            message=final_message
-        )
+            if risk_score > 80: final_severity = "CRITICAL"
+            elif risk_score > 60: final_severity = "HIGH"
 
-    # 3. Start Packet Capture (Live, Simulated, or Replay)
+            if attempts >= BLOCK_THRESHOLD:
+                firewall.block_ip(src_ip, f"Exceeded {BLOCK_THRESHOLD} attacks in {BLOCK_WINDOW}s")
+                final_severity = "CRITICAL"
+
+            final_message = sig_alert['message'] if sig_alert else f"ML Anomaly detected from {src_ip}"
+            if intel_hit: final_message = f"Malicious IP detected: {src_ip} (Threat Intel)"
+
+            alert_queue.put({
+                'timestamp': timestamp, 'source_ip': src_ip, 'dest_ip': dst_ip,
+                'type': final_type, 'severity': final_severity, 'detection_source': detection_source,
+                'ml_confidence': round(ml_prob, 2), 'risk_score': risk_score, 'message': final_message
+            })
+
+            db_logger.log_event(
+                timestamp=timestamp, src_ip=src_ip, dst_ip=dst_ip, protocol=proto, service="", 
+                port=port, size=size, flags=flags, payload=payload, sig_triggered=bool(sig_alert),
+                ml_triggered=ml_triggered, ml_prob=ml_prob, source=detection_source,
+                severity=final_severity, attack_type=final_type, risk_score=risk_score, message=final_message
+            )
+
+    # 2. Start Threads
     try:
-        if "--replay" in sys.argv:
-            replay_attacks(orchestrate_detection)
-        else:
-            print("[*] IDS active and monitoring traffic...")
-            simulate_packets(orchestrate_detection)
+        intel_thread = threading.Thread(target=intel_manager.update_feed)
+        intel_thread.daemon = True
+        intel_thread.start()
+    except Exception as e:
+        print(f"[!] Threat Intel Startup Error: {e}")
+
+    def run_correlation():
+        while True:
+            time.sleep(30)
+            corrector.analyze()
+
+    correlation_thread = threading.Thread(target=run_correlation)
+    correlation_thread.daemon = True
+    correlation_thread.start()
+
+    def run_engine():
+        try:
+            if "--replay" in sys.argv:
+                replay_attacks(orchestrate_detection)
+            else:
+                print("[*] IDS active and monitoring traffic...")
+                simulate_packets(orchestrate_detection)
+        except Exception as e:
+            print(f"[!] Engine Error: {e}")
+
+    engine_thread = threading.Thread(target=run_engine)
+    engine_thread.daemon = True
+    engine_thread.start()
+
+    # 3. Start Dashboard on Port
+    port = int(os.environ.get("PORT", 5000))
+    print(f"[*] Initializing Web Dashboard on port {port}...")
+    from src.dashboard.app import run_dashboard
+    try:
+        run_dashboard()
     except KeyboardInterrupt:
         print("\n[!] Shutting down IDS...")
         db_logger.stop()
