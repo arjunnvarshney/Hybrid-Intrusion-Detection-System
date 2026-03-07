@@ -427,7 +427,9 @@ def run_dashboard():
     # Start background tasks
     socketio.start_background_task(background_alert_emitter)
     socketio.start_background_task(health_stats_monitor)
-    socketio.run(app, host='0.0.0.0', port=5000, debug=False, use_reloader=False)
+    # Use environment port for deployment (defaults to 5000)
+    port = int(os.environ.get("PORT", 5000))
+    socketio.run(app, host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
 def start_dashboard_thread():
     thread = threading.Thread(target=run_dashboard)

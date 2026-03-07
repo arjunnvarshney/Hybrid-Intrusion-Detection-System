@@ -14,3 +14,5 @@ requests
 fpdf2
 psutil
 flask-login
+gunicorn
+eventlet
