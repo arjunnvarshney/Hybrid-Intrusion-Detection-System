@@ -180,6 +180,45 @@
             color: #484f58;
             letter-spacing: 0.5px;
         }
+
+        .divider {
+            display: flex;
+            align-items: center;
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 0.7rem;
+            font-weight: 700;
+        }
+
+        .divider::before,
+        .divider::after {
+            content: '';
+            flex: 1;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .divider span {
+            padding: 0 10px;
+        }
+
+        .guest-btn {
+            border-color: var(--border-color);
+            color: var(--text-muted);
+            border-radius: 12px;
+            padding: 12px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .guest-btn:hover {
+            background: rgba(255, 255, 255, 0.05);
+            border-color: var(--text-muted);
+            color: var(--text-main);
+        }
+
+        .btn-icon {
+            margin-right: 8px;
+        }
     </style>
 </head>
 <body>
@@ -210,6 +249,16 @@
                 <input type="password" name="password" class="form-control" placeholder="••••••••" required>
             </div>
             <button type="submit" class="btn btn-primary w-100">Initialize Uplink</button>
+        </form>
+
+        <div class="divider my-4">
+            <span>OR</span>
+        </div>
+
+        <form action="{{ url_for('guest_login') }}" method="POST">
+            <button type="submit" class="btn btn-outline-secondary w-100 guest-btn">
+                <span class="btn-icon">👁️</span> Read-Only Guest Access
+            </button>
         </form>
 
         <div class="footer-text uppercase">

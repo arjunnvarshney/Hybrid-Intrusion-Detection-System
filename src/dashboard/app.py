@@ -25,7 +25,8 @@ login_manager.login_view = 'login'
 
 # Mock user database
 USERS = {
-    "admin": generate_password_hash("password")
+    "admin": generate_password_hash("password"),
+    "guest": generate_password_hash("guest_access_unlocked") # Guest password is not used but kept for consistency
 }
 
 class User(UserMixin):
@@ -58,6 +59,12 @@ def login():
 def logout():
     logout_user()
     return redirect(url_for('login'))
+
+@app.route('/guest_login', methods=['POST'])
+def guest_login():
+    user = User("guest")
+    login_user(user)
+    return redirect(url_for('index'))
 
 @app.route('/')
 @login_required
@@ -308,7 +315,10 @@ def get_health():
 @app.route('/api/unblock/<path:ip>', methods=['POST'])
 @login_required
 def unblock_ip(ip):
-    """Manually unblock an IP."""
+    """Manually unblock an IP. Restricted to admin."""
+    if current_user.id != 'admin':
+        return jsonify({"status": "error", "message": "Permission denied. Admin privileges required."}), 403
+        
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
